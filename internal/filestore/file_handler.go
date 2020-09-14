@@ -118,76 +118,65 @@ func SaveFileFromReader(ctx context.Context, reader io.Reader, size int64, opts 
 	}()
 
 	var clientMode string
-	if !opts.IsLocal() {
-		switch {
-		case opts.UseWorkhorseClientEnabled() && opts.ObjectStorageConfig.IsGoCloud():
-			clientMode = fmt.Sprintf("go_cloud:%s", opts.ObjectStorageConfig.Provider)
-			p := &objectstore.GoCloudObjectParams{
-				Ctx:        ctx,
-				Mux:        opts.ObjectStorageConfig.URLMux,
-				BucketURL:  opts.ObjectStorageConfig.GoCloudConfig.URL,
-				ObjectName: opts.RemoteTempObjectID,
-				Deadline:   opts.Deadline,
-			}
-			remoteWriter, err = objectstore.NewGoCloudObject(p)
-		case opts.UseWorkhorseClientEnabled() && opts.ObjectStorageConfig.IsAWS() && opts.ObjectStorageConfig.IsValid():
-			clientMode = "s3"
-			remoteWriter, err = objectstore.NewS3Object(
-				ctx,
-				opts.RemoteTempObjectID,
-				opts.ObjectStorageConfig.S3Credentials,
-				opts.ObjectStorageConfig.S3Config,
-				opts.Deadline,
-			)
-		case opts.IsMultipart():
-			clientMode = "multipart"
-			remoteWriter, err = objectstore.NewMultipart(
-				ctx,
-				opts.PresignedParts,
-				opts.PresignedCompleteMultipart,
-				opts.PresignedAbortMultipart,
-				opts.PresignedDelete,
-				opts.PutHeaders,
-				opts.Deadline,
-				opts.PartSize,
-			)
-		default:
-			clientMode = "http"
-			remoteWriter, err = objectstore.NewObject(
-				ctx,
-				opts.PresignedPut,
-				opts.PresignedDelete,
-				opts.PutHeaders,
-				opts.Deadline,
-				size,
-			)
-		}
 
-		if err != nil {
-			return nil, err
-		}
-
-		writers = append(writers, remoteWriter)
-
-		defer func() {
-			if err != nil {
-				remoteWriter.CloseWithError(err)
-			}
-		}()
-	} else {
+	switch {
+	case opts.IsLocal():
 		clientMode = "local"
-
-		fileWriter, err := fh.uploadLocalFile(ctx, opts)
-		if err != nil {
-			return nil, err
+		remoteWriter, err = fh.uploadLocalFile(ctx, opts)
+	case opts.UseWorkhorseClientEnabled() && opts.ObjectStorageConfig.IsGoCloud():
+		clientMode = fmt.Sprintf("go_cloud:%s", opts.ObjectStorageConfig.Provider)
+		p := &objectstore.GoCloudObjectParams{
+			Ctx:        ctx,
+			Mux:        opts.ObjectStorageConfig.URLMux,
+			BucketURL:  opts.ObjectStorageConfig.GoCloudConfig.URL,
+			ObjectName: opts.RemoteTempObjectID,
+			Deadline:   opts.Deadline,
 		}
-
-		writers = append(writers, fileWriter)
+		remoteWriter, err = objectstore.NewGoCloudObject(p)
+	case opts.UseWorkhorseClientEnabled() && opts.ObjectStorageConfig.IsAWS() && opts.ObjectStorageConfig.IsValid():
+		clientMode = "s3"
+		remoteWriter, err = objectstore.NewS3Object(
+			ctx,
+			opts.RemoteTempObjectID,
+			opts.ObjectStorageConfig.S3Credentials,
+			opts.ObjectStorageConfig.S3Config,
+			opts.Deadline,
+		)
+	case opts.IsMultipart():
+		clientMode = "multipart"
+		remoteWriter, err = objectstore.NewMultipart(
+			ctx,
+			opts.PresignedParts,
+			opts.PresignedCompleteMultipart,
+			opts.PresignedAbortMultipart,
+			opts.PresignedDelete,
+			opts.PutHeaders,
+			opts.Deadline,
+			opts.PartSize,
+		)
+	default:
+		clientMode = "http"
+		remoteWriter, err = objectstore.NewObject(
+			ctx,
+			opts.PresignedPut,
+			opts.PresignedDelete,
+			opts.PutHeaders,
+			opts.Deadline,
+			size,
+		)
 	}
 
-	if len(writers) == 1 {
-		return nil, errors.New("missing upload destination")
+	if err != nil {
+		return nil, err
 	}
+
+	writers = append(writers, remoteWriter)
+
+	defer func() {
+		if err != nil {
+			remoteWriter.CloseWithError(err)
+		}
+	}()
 
 	if opts.MaximumSize > 0 {
 		if size > opts.MaximumSize {
@@ -233,24 +222,22 @@ func SaveFileFromReader(ctx context.Context, reader io.Reader, size int64, opts 
 
 	fh.hashes = hashes.finish()
 
-	if !opts.IsLocal() {
-		// we need to close the writer in order to get ETag header
-		err = remoteWriter.Close()
-		if err != nil {
-			if err == objectstore.ErrNotEnoughParts {
-				return nil, ErrEntityTooLarge
-			}
-			return nil, err
+	// we need to close the writer in order to get ETag header
+	err = remoteWriter.Close()
+	if err != nil {
+		if err == objectstore.ErrNotEnoughParts {
+			return nil, ErrEntityTooLarge
 		}
-
-		etag := remoteWriter.ETag()
-		fh.hashes["etag"] = etag
+		return nil, err
 	}
+
+	etag := remoteWriter.ETag()
+	fh.hashes["etag"] = etag
 
 	return fh, err
 }
 
-func (fh *FileHandler) uploadLocalFile(ctx context.Context, opts *SaveFileOpts) (io.WriteCloser, error) {
+func (fh *FileHandler) uploadLocalFile(ctx context.Context, opts *SaveFileOpts) (objectstore.Upload, error) {
 	// make sure TempFolder exists
 	err := os.MkdirAll(opts.LocalTempPath, 0700)
 	if err != nil {
@@ -268,8 +255,13 @@ func (fh *FileHandler) uploadLocalFile(ctx context.Context, opts *SaveFileOpts) 
 	}()
 
 	fh.LocalPath = file.Name()
-	return file, nil
+	return &nopUpload{file}, nil
 }
+
+type nopUpload struct{ io.WriteCloser }
+
+func (nop *nopUpload) CloseWithError(error) error { return nop.Close() }
+func (nop *nopUpload) ETag() string               { return "" }
 
 // SaveFileFromDisk open the local file fileName and calls SaveFileFromReader
 func SaveFileFromDisk(ctx context.Context, fileName string, opts *SaveFileOpts) (fh *FileHandler, err error) {
