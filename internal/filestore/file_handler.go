@@ -101,7 +101,7 @@ func (fh *FileHandler) GitLabFinalizeFields(prefix string) (map[string]string, e
 // SaveFileFromReader persists the provided reader content to all the location specified in opts. A cleanup will be performed once ctx is Done
 // Make sure the provided context will not expire before finalizing upload with GitLab Rails.
 func SaveFileFromReader(ctx context.Context, reader io.Reader, size int64, opts *SaveFileOpts) (fh *FileHandler, err error) {
-	var remoteWriter objectstore.Upload
+	var uploadWriter objectstore.Upload
 	fh = &FileHandler{
 		Name:      opts.TempFilePrefix,
 		RemoteID:  opts.RemoteID,
@@ -122,7 +122,7 @@ func SaveFileFromReader(ctx context.Context, reader io.Reader, size int64, opts 
 	switch {
 	case opts.IsLocal():
 		clientMode = "local"
-		remoteWriter, err = fh.uploadLocalFile(ctx, opts)
+		uploadWriter, err = fh.uploadLocalFile(ctx, opts)
 	case opts.UseWorkhorseClientEnabled() && opts.ObjectStorageConfig.IsGoCloud():
 		clientMode = fmt.Sprintf("go_cloud:%s", opts.ObjectStorageConfig.Provider)
 		p := &objectstore.GoCloudObjectParams{
@@ -132,10 +132,10 @@ func SaveFileFromReader(ctx context.Context, reader io.Reader, size int64, opts 
 			ObjectName: opts.RemoteTempObjectID,
 			Deadline:   opts.Deadline,
 		}
-		remoteWriter, err = objectstore.NewGoCloudObject(p)
+		uploadWriter, err = objectstore.NewGoCloudObject(p)
 	case opts.UseWorkhorseClientEnabled() && opts.ObjectStorageConfig.IsAWS() && opts.ObjectStorageConfig.IsValid():
 		clientMode = "s3"
-		remoteWriter, err = objectstore.NewS3Object(
+		uploadWriter, err = objectstore.NewS3Object(
 			ctx,
 			opts.RemoteTempObjectID,
 			opts.ObjectStorageConfig.S3Credentials,
@@ -144,7 +144,7 @@ func SaveFileFromReader(ctx context.Context, reader io.Reader, size int64, opts 
 		)
 	case opts.IsMultipart():
 		clientMode = "multipart"
-		remoteWriter, err = objectstore.NewMultipart(
+		uploadWriter, err = objectstore.NewMultipart(
 			ctx,
 			opts.PresignedParts,
 			opts.PresignedCompleteMultipart,
@@ -156,7 +156,7 @@ func SaveFileFromReader(ctx context.Context, reader io.Reader, size int64, opts 
 		)
 	default:
 		clientMode = "http"
-		remoteWriter, err = objectstore.NewObject(
+		uploadWriter, err = objectstore.NewObject(
 			ctx,
 			opts.PresignedPut,
 			opts.PresignedDelete,
@@ -170,11 +170,11 @@ func SaveFileFromReader(ctx context.Context, reader io.Reader, size int64, opts 
 		return nil, err
 	}
 
-	writers = append(writers, remoteWriter)
+	writers = append(writers, uploadWriter)
 
 	defer func() {
 		if err != nil {
-			remoteWriter.CloseWithError(err)
+			uploadWriter.CloseWithError(err)
 		}
 	}()
 
@@ -223,7 +223,7 @@ func SaveFileFromReader(ctx context.Context, reader io.Reader, size int64, opts 
 	fh.hashes = hashes.finish()
 
 	// we need to close the writer in order to get ETag header
-	err = remoteWriter.Close()
+	err = uploadWriter.Close()
 	if err != nil {
 		if err == objectstore.ErrNotEnoughParts {
 			return nil, ErrEntityTooLarge
@@ -231,7 +231,7 @@ func SaveFileFromReader(ctx context.Context, reader io.Reader, size int64, opts 
 		return nil, err
 	}
 
-	etag := remoteWriter.ETag()
+	etag := uploadWriter.ETag()
 	fh.hashes["etag"] = etag
 
 	return fh, err
