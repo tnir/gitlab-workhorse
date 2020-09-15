@@ -98,10 +98,17 @@ func (fh *FileHandler) GitLabFinalizeFields(prefix string) (map[string]string, e
 	return data, nil
 }
 
+// Upload represents a destination where we store an upload
+type Upload interface {
+	io.WriteCloser
+	CloseWithError(error) error
+	ETag() string
+}
+
 // SaveFileFromReader persists the provided reader content to all the location specified in opts. A cleanup will be performed once ctx is Done
 // Make sure the provided context will not expire before finalizing upload with GitLab Rails.
 func SaveFileFromReader(ctx context.Context, reader io.Reader, size int64, opts *SaveFileOpts) (fh *FileHandler, err error) {
-	var uploadWriter objectstore.Upload
+	var uploadWriter Upload
 	fh = &FileHandler{
 		Name:      opts.TempFilePrefix,
 		RemoteID:  opts.RemoteID,
@@ -237,7 +244,7 @@ func SaveFileFromReader(ctx context.Context, reader io.Reader, size int64, opts 
 	return fh, err
 }
 
-func (fh *FileHandler) uploadLocalFile(ctx context.Context, opts *SaveFileOpts) (objectstore.Upload, error) {
+func (fh *FileHandler) uploadLocalFile(ctx context.Context, opts *SaveFileOpts) (Upload, error) {
 	// make sure TempFolder exists
 	err := os.MkdirAll(opts.LocalTempPath, 0700)
 	if err != nil {
