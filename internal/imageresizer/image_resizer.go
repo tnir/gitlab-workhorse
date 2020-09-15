@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -161,7 +162,7 @@ func (r *resizer) unpackParameters(paramsData string) (*resizeParams, error) {
 	}
 
 	if params.ContentType == "" {
-		return nil, fmt.Errorf("ImageResizer: Image MIME type must be set")
+		return nil, fmt.Errorf("ImageResizer: ContentType must be set")
 	}
 
 	return &params, nil
@@ -179,35 +180,22 @@ func tryResizeImage(req *http.Request, r io.Reader, errorWriter io.Writer, param
 		numScalerProcs.decrement()
 	}()
 
-	width := params.Width
-	gmFileSpec := determineFilePrefix(params.ContentType)
-	if gmFileSpec == "" {
-		return r, nil, fmt.Errorf("ImageResizer: unexpected MIME type: %s", params.ContentType)
-	}
-
-	resizeCmd, resizedImageReader, err := startResizeImageCommand(ctx, r, errorWriter, width, gmFileSpec)
+	resizeCmd, resizedImageReader, err := startResizeImageCommand(ctx, r, errorWriter, params)
 	if err != nil {
-		return r, nil, fmt.Errorf("ImageResizer: failed forking into graphicsmagick")
+		return r, nil, fmt.Errorf("ImageResizer: failed forking into scaler process: %w", err)
 	}
 	return resizedImageReader, resizeCmd, nil
 }
 
-func determineFilePrefix(contentType string) string {
-	switch contentType {
-	case "image/png":
-		return "png:"
-	case "image/jpeg":
-		return "jpg:"
-	default:
-		return ""
-	}
-}
-
-func startResizeImageCommand(ctx context.Context, imageReader io.Reader, errorWriter io.Writer, width uint, gmFileSpec string) (*exec.Cmd, io.ReadCloser, error) {
-	cmd := exec.CommandContext(ctx, "gm", "convert", "-resize", fmt.Sprintf("%dx", width), gmFileSpec+"-", "-")
+func startResizeImageCommand(ctx context.Context, imageReader io.Reader, errorWriter io.Writer, params *resizeParams) (*exec.Cmd, io.ReadCloser, error) {
+	cmd := exec.CommandContext(ctx, "gitlab-resize-image")
 	cmd.Stdin = imageReader
 	cmd.Stderr = errorWriter
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Env = []string{
+		"GL_RESIZE_IMAGE_WIDTH=" + strconv.Itoa(int(params.Width)),
+		"GL_RESIZE_IMAGE_CONTENT_TYPE=" + params.ContentType,
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

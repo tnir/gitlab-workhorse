@@ -12,6 +12,15 @@ import (
 
 var r = resizer{}
 
+func TestMain(m *testing.M) {
+	path := os.Getenv("PATH")
+	// put gitlab-resize-image binary on PATH
+	os.Setenv("PATH", "../..:"+path)
+	defer os.Setenv("PATH", path) // restore original PATH
+
+	os.Exit(m.Run())
+}
+
 func TestUnpackParametersReturnsParamsInstanceForValidInput(t *testing.T) {
 	inParams := resizeParams{Location: "/path/to/img", Width: 64, ContentType: "image/png"}
 
@@ -37,12 +46,6 @@ func TestUnpackParametersReturnsErrorWhenContentTypeBlank(t *testing.T) {
 	require.Error(t, err, "expected error when ContentType is blank")
 }
 
-func TestDetermineFilePrefixFromMimeType(t *testing.T) {
-	require.Equal(t, "png:", determineFilePrefix("image/png"))
-	require.Equal(t, "jpg:", determineFilePrefix("image/jpeg"))
-	require.Equal(t, "", determineFilePrefix("unsupported"))
-}
-
 func TestTryResizeImageSuccess(t *testing.T) {
 	inParams := resizeParams{Location: "/path/to/img", Width: 64, ContentType: "image/png"}
 	inFile := testImage(t)
@@ -55,19 +58,6 @@ func TestTryResizeImageSuccess(t *testing.T) {
 	require.NotNil(t, cmd)
 	require.NotNil(t, reader)
 	require.NotEqual(t, inFile, reader)
-}
-
-func TestTryResizeImageFailsOverToOriginalImageWhenContentTypeNotSupported(t *testing.T) {
-	inParams := resizeParams{Location: "/path/to/img", Width: 64, ContentType: "not supported"}
-	inFile := testImage(t)
-	req, err := http.NewRequest("GET", "/foo", nil)
-	require.NoError(t, err)
-
-	reader, cmd, err := tryResizeImage(req, inFile, os.Stderr, &inParams)
-
-	require.Error(t, err)
-	require.Nil(t, cmd)
-	require.Equal(t, inFile, reader)
 }
 
 func TestGraphicsMagickFailsWhenContentTypeNotMatchingFileContents(t *testing.T) {
