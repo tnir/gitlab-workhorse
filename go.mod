@@ -30,8 +30,8 @@ require (
 	gitlab.com/gitlab-org/labkit v0.0.0-20200520155818-96e583c57891
 	gocloud.dev v0.20.0
 	golang.org/x/lint v0.0.0-20200302205851-738671d3881b
-	golang.org/x/net v0.0.0-20200602114024-627f9648deb9
-	golang.org/x/tools v0.0.0-20200608174601-1b747fd94509
+	golang.org/x/net v0.7.0
+	golang.org/x/tools v0.1.12
 	google.golang.org/grpc v1.29.1
 	gopkg.in/yaml.v2 v2.2.8 // indirect
 	honnef.co/go/tools v0.0.1-2020.1.5
